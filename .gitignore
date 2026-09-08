@@ -33,3 +33,6 @@ Thumbs.db
 
 # Local version manager
 .python-version
+notebook.ipynb
+structure.txt
+uv.lock
