@@ -1,0 +1,38 @@
+github-open-source-analytics/
+│
+├── docker-compose.yml
+├── .env
+├── .gitignore
+├── README.md
+│
+├── extraction/
+│   ├── github_client.py
+│   ├── repositories.py
+│   ├── commits.py
+│   ├── issues.py
+│   ├── pull_requests.py
+│   └── stats.py
+│
+├── database/
+│   ├── schemas/
+│   └── init/
+│
+├── dbt/
+│   ├── models/
+│   │   ├── staging/
+│   │   └── marts/
+│   ├── tests/
+│   ├── macros/
+│   └── dbt_project.yml
+│
+├── airflow/
+│   └── dags/
+│       └── github_pipeline.py
+│
+├── sql/
+│   └── analysis/
+│
+├── logs/
+│
+└── docs/
+    └── project_plan.md
