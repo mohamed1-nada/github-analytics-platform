@@ -1,6 +1,3 @@
-from github_client import GithubClient
-
-
 def get_repo(client, owner, repo):
 
     endpoint = f"/repos/{owner}/{repo}"
@@ -29,11 +26,3 @@ def get_repo(client, owner, repo):
         "topics": data.get("topics"),
     }
 
-client = GithubClient()
-
-repo = get_repo(
-    client,
-    'torvalds',
-    'linux'
-)
-print(repo)

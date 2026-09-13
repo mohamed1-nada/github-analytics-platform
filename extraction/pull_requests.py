@@ -1,22 +1,22 @@
-from github_client import GithubClient
-
-
-def get_pull_requests(client, owner, repo):
+def get_pull_requests(client, owner, repo , since = None , until = None):
 
     endpoint = f"/repos/{owner}/{repo}/pulls"
-
-    prs_generator = client.get_with_pagination(endpoint)
-
-    pull_requests = []
-
+    params = {}
+    if since:
+        params['since'] = since
+    if until:   
+        params['until'] = until
+        
+    prs_generator = client.get_with_pagination(endpoint , params)
+    
     for pr in prs_generator:
 
-        pull_requests.append({
+        yield {
             "id": pr.get("id"),
             "number": pr.get("number"),
             "title": pr.get("title"),
 
-            "user_login": pr.get("user", {}).get("login"),
+            "user_login": pr.get(("user") or {}).get("login"),
 
             "state": pr.get("state"),
 
@@ -28,18 +28,5 @@ def get_pull_requests(client, owner, repo):
             "draft": pr.get("draft"),
 
             "merge_commit_sha": pr.get("merge_commit_sha"),
-        })
+        }
 
-    return pull_requests
-
-
-client = GithubClient()
-
-pull_requests_data = get_pull_requests(
-    client,
-    "facebook",
-    "react"
-)
-
-print(len(pull_requests_data))
-print(pull_requests_data[0])

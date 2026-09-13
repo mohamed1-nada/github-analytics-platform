@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class GithubClient:
 
     API_TOKEN = os.getenv("GITHUB_TOKEN")
-    BASE_URL = os.getenv("BASE_URL")
+    BASE_URL = os.getenv("BASE_URL")        
 
     def __init__(self):
 
