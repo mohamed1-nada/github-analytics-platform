@@ -21,11 +21,14 @@ def get_contributors_stats(client, owner, repo):
  
     data = client.get(endpoint)
     
-    contributor_info = data.get("author") or {}
-
     for contributor in data:
+        author_info = contributor.get("author") or {}
+        author_login = author_info.get("login")
+        # skip None and deleted accounts
+        if not author_login:
+            continue
         yield {
-            "author_login": contributor_info.get("login"),
+            "author_login": author_login,
             "total_commits": contributor.get("total")
         }
     
