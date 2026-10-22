@@ -185,7 +185,10 @@ def bar_params(
         "show_value": False,
         "truncate_metric": True,
         "color_scheme": "supersetColors",
-        "orientation": "vertical",
+        # Repository names are long: put them on the category axis so the
+        # labels stay readable instead of being rotated, clipped or dropped.
+        "orientation": "horizontal" if x_axis == "full_name" else "vertical",
+        "xAxisLabelRotation": 0,
         "rich_tooltip": True,
         "label": label or "",
     }
@@ -198,6 +201,7 @@ def line_params(
     metrics: list[str],
     row_limit: int = 10000,
     label: str | None = None,
+    time_range: str = "No filter",
 ) -> dict[str, Any]:
     """Form data for a time-series line chart."""
     return {
@@ -208,7 +212,7 @@ def line_params(
         "groupby": [],
         "metrics": metrics,
         "adhoc_filters": [],
-        "time_range": "No filter",
+        "time_range": time_range,
         "order_desc": True,
         "row_limit": row_limit,
         "series_limit": 0,
@@ -263,6 +267,22 @@ def greater_than_filter(column: str, value: Any) -> dict[str, Any]:
         "subject": column,
         "operator": ">",
         "comparator": str(value),
+        "clause": "WHERE",
+    }
+
+
+def not_null_filter(column: str) -> dict[str, Any]:
+    """An ``adhoc_filters`` entry dropping NULL values of one column.
+
+    Postgres sorts NULLs first in a ``DESC`` order, so a ranking that keeps
+    the top N rows would otherwise be filled with the rows where the measure
+    is undefined and render as an empty chart.
+    """
+    return {
+        "expressionType": "SIMPLE",
+        "subject": column,
+        "operator": "IS NOT NULL",
+        "comparator": None,
         "clause": "WHERE",
     }
 
@@ -431,7 +451,7 @@ CHART_SPECS: list[dict[str, Any]] = [
             "Contribution concentration per repository: how much of the commit "
             "history belongs to the single most active contributor."
         ),
-        "position": (0, 0, 12, 9),
+        "position": (0, 0, 12, 72),
         "build": lambda d: table_params(
             d,
             [
@@ -444,7 +464,7 @@ CHART_SPECS: list[dict[str, Any]] = [
                 "bus_factor",
             ],
             orderby=[["contributors", False]],
-            row_limit=50,
+            row_limit=200,
         ),
     },
     {
@@ -456,7 +476,7 @@ CHART_SPECS: list[dict[str, Any]] = [
             "active contributor — a proxy for key-person risk. Only "
             "repositories with contributor statistics are ranked."
         ),
-        "position": (0, 9, 6, 8),
+        "position": (0, 9, 6, 64),
         "build": lambda d: bar_params(
             d,
             x_axis="full_name",
@@ -477,7 +497,7 @@ CHART_SPECS: list[dict[str, Any]] = [
             "without contributor statistics are excluded — their bus factor "
             "is unknown."
         ),
-        "position": (6, 9, 6, 8),
+        "position": (6, 9, 6, 64),
         "build": lambda d: bar_params(
             d,
             x_axis="bus_factor",
@@ -492,7 +512,7 @@ CHART_SPECS: list[dict[str, Any]] = [
         "dataset": "concentration",
         "name": "Repositories with a single maintainer",
         "description": "Count of repositories where one contributor wrote all the commits.",
-        "position": (0, 17, 6, 6),
+        "position": (0, 17, 6, 48),
         "build": lambda d: number_params(
             d,
             metric="count",
@@ -507,7 +527,7 @@ CHART_SPECS: list[dict[str, Any]] = [
         "dataset": "concentration",
         "name": "Average top-1 share by language",
         "description": "Mean single-contributor share, grouped by primary language.",
-        "position": (6, 17, 6, 6),
+        "position": (6, 17, 6, 48),
         "build": lambda d: bar_params(
             d,
             x_axis="language",
@@ -522,11 +542,12 @@ CHART_SPECS: list[dict[str, Any]] = [
         "dataset": "activity",
         "name": "Commits per week",
         "description": "Portfolio-wide commit volume per ISO week.",
-        "position": (0, 0, 6, 8),
+        "position": (0, 0, 6, 64),
         "build": lambda d: line_params(
             d,
             time_column="week_start",
             metrics=["sum__commits"],
+            time_range="Last 3 months",
         ),
     },
     {
@@ -534,11 +555,12 @@ CHART_SPECS: list[dict[str, Any]] = [
         "dataset": "activity",
         "name": "Pull requests created vs merged per week",
         "description": "Weekly pull request inflow versus merges.",
-        "position": (6, 0, 6, 8),
+        "position": (6, 0, 6, 64),
         "build": lambda d: line_params(
             d,
             time_column="week_start",
             metrics=["sum__prs_created", "sum__prs_merged"],
+            time_range="Last 3 months",
         ),
     },
     {
@@ -546,11 +568,12 @@ CHART_SPECS: list[dict[str, Any]] = [
         "dataset": "activity",
         "name": "Issues created vs closed per week",
         "description": "Weekly issue inflow versus resolutions.",
-        "position": (0, 8, 6, 8),
+        "position": (0, 8, 6, 64),
         "build": lambda d: line_params(
             d,
             time_column="week_start",
             metrics=["sum__issues_created", "sum__issues_closed"],
+            time_range="Last 3 months",
         ),
     },
     {
@@ -558,11 +581,12 @@ CHART_SPECS: list[dict[str, Any]] = [
         "dataset": "activity",
         "name": "Active authors per week",
         "description": "Distinct commit authors active in each week.",
-        "position": (6, 8, 6, 8),
+        "position": (6, 8, 6, 64),
         "build": lambda d: line_params(
             d,
             time_column="week_start",
             metrics=["sum__active_authors"],
+            time_range="Last 3 months",
         ),
     },
     {
@@ -570,7 +594,7 @@ CHART_SPECS: list[dict[str, Any]] = [
         "dataset": "activity",
         "name": "Recent weekly activity",
         "description": "Raw weekly rows: commits, authors, pull requests and issues.",
-        "position": (0, 16, 12, 8),
+        "position": (0, 16, 12, 64),
         "build": lambda d: table_params(
             d,
             [
@@ -594,7 +618,7 @@ CHART_SPECS: list[dict[str, Any]] = [
         "dataset": "backlog",
         "name": "Open issues by repository",
         "description": "Repositories ranked by the number of open issues.",
-        "position": (0, 0, 6, 8),
+        "position": (0, 0, 6, 64),
         "build": lambda d: bar_params(
             d,
             x_axis="full_name",
@@ -611,7 +635,7 @@ CHART_SPECS: list[dict[str, Any]] = [
             "Open issues per repository split into age buckets: under 30 days, "
             "30 to 90 days, and over 90 days."
         ),
-        "position": (6, 0, 6, 8),
+        "position": (6, 0, 6, 64),
         "build": lambda d: bar_params(
             d,
             x_axis="full_name",
@@ -629,13 +653,14 @@ CHART_SPECS: list[dict[str, Any]] = [
         "dataset": "backlog",
         "name": "Issue close rate by repository",
         "description": "Share of issues that were closed, per repository.",
-        "position": (0, 8, 6, 8),
+        "position": (0, 8, 6, 64),
         "build": lambda d: bar_params(
             d,
             x_axis="full_name",
             metrics=["avg__close_rate_pct"],
             row_limit=20,
             orderby=[["avg__close_rate_pct", False]],
+            adhoc_filters=[not_null_filter("close_rate_pct")],
         ),
     },
     {
@@ -643,7 +668,7 @@ CHART_SPECS: list[dict[str, Any]] = [
         "dataset": "backlog",
         "name": "Backlog summary",
         "description": "Per-repository backlog, close rate and median age of open issues.",
-        "position": (6, 8, 6, 8),
+        "position": (6, 8, 6, 64),
         "build": lambda d: table_params(
             d,
             [
@@ -665,7 +690,7 @@ CHART_SPECS: list[dict[str, Any]] = [
         "dataset": "backlog",
         "name": "Open issues across the portfolio",
         "description": "Total number of open issues in every tracked repository.",
-        "position": (0, 16, 12, 5),
+        "position": (0, 16, 12, 40),
         "build": lambda d: number_params(d, metric="sum__open_issues"),
     },
     # --- Repository health ------------------------------------------------
@@ -677,7 +702,7 @@ CHART_SPECS: list[dict[str, Any]] = [
             "Composite health score per repository with its activity, community, "
             "backlog and popularity components."
         ),
-        "position": (0, 0, 12, 9),
+        "position": (0, 0, 12, 72),
         "build": lambda d: table_params(
             d,
             [
@@ -695,7 +720,7 @@ CHART_SPECS: list[dict[str, Any]] = [
                 "last_commit_date",
             ],
             orderby=[["health_score", False]],
-            row_limit=50,
+            row_limit=200,
         ),
     },
     {
@@ -703,7 +728,7 @@ CHART_SPECS: list[dict[str, Any]] = [
         "dataset": "health",
         "name": "Health band distribution",
         "description": "How many repositories fall into each health band.",
-        "position": (0, 9, 6, 7),
+        "position": (0, 9, 6, 56),
         "build": lambda d: bar_params(
             d,
             x_axis="health_band",
@@ -717,7 +742,7 @@ CHART_SPECS: list[dict[str, Any]] = [
         "dataset": "health",
         "name": "Top repositories by health score",
         "description": "The 20 healthiest repositories in the portfolio.",
-        "position": (6, 9, 6, 7),
+        "position": (6, 9, 6, 56),
         "build": lambda d: bar_params(
             d,
             x_axis="full_name",
@@ -734,7 +759,7 @@ CHART_SPECS: list[dict[str, Any]] = [
             "Average activity, community, backlog and popularity scores, "
             "grouped by primary language."
         ),
-        "position": (0, 16, 12, 8),
+        "position": (0, 16, 12, 64),
         "build": lambda d: bar_params(
             d,
             x_axis="language",
@@ -831,25 +856,80 @@ DASHBOARD_SPECS: list[dict[str, Any]] = [
 def build_position(
     chart_ids: list[int],
     placements: dict[str, tuple[int, int, int, int]],
+    charts: dict[int, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Lay the charts out on the 12-column grid Superset uses."""
-    position: dict[str, Any] = {"DASHBOARD_VERSION_KEY": "v2"}
-    children: list[str] = []
+    """Lay the charts out on the 12-column grid Superset uses.
+
+    ``placements`` maps a chart id (as a string) to ``(x, y, width, height)``:
+    ``width`` is measured in grid columns (1-12), ``height`` in grid units of
+    8px (we use 48-72, i.e. 384-576px). Charts sharing a ``y`` land in the same
+    row; ``x`` only decides their order inside that row.
+
+    Superset renders a layout only when it is the tree the dashboard editor
+    builds: ``ROOT -> GRID -> ROW -> COLUMN -> CHART`` with ``parents``
+    recorded at every level. A flat layout still shows the chart titles, but
+    the grid resolves each slot to a zero-width box, so the charts draw
+    nothing.
+    """
+    charts = charts or {}
+    rows: dict[int, list[tuple[int, int, int, int]]] = {}
     for chart_id in chart_ids:
         x, y, width, height = placements[str(chart_id)]
-        key = f"CHART-{chart_id}"
-        children.append(key)
-        position[key] = {
-            "type": "CHART",
-            "id": key,
-            "children": [],
-            "meta": {"chartId": chart_id, "width": width, "height": height},
+        rows.setdefault(y, []).append((x, chart_id, width, height))
+
+    position: dict[str, Any] = {"DASHBOARD_VERSION_KEY": "v2"}
+    row_keys: list[str] = []
+    for row_index, (_, items) in enumerate(sorted(rows.items())):
+        row_key = f"ROW-{row_index}"
+        column_keys: list[str] = []
+        for column_index, (_, chart_id, width, height) in enumerate(sorted(items)):
+            column_key = f"COLUMN-{row_index}-{column_index}"
+            chart_key = f"CHART-{chart_id}"
+            chart = charts.get(chart_id, {})
+            meta: dict[str, Any] = {
+                "chartId": chart_id,
+                "width": width,
+                "height": height,
+                "sliceName": chart.get("slice_name", ""),
+            }
+            if chart.get("uuid"):
+                meta["uuid"] = chart["uuid"]
+            position[chart_key] = {
+                "type": "CHART",
+                "id": chart_key,
+                "children": [],
+                "parents": ["ROOT_ID", "GRID_ID", row_key, column_key],
+                "meta": meta,
+            }
+            position[column_key] = {
+                "type": "COLUMN",
+                "id": column_key,
+                "children": [chart_key],
+                "parents": ["ROOT_ID", "GRID_ID", row_key],
+                "meta": {"width": width, "background": "BACKGROUND_TRANSPARENT"},
+            }
+            column_keys.append(column_key)
+        position[row_key] = {
+            "type": "ROW",
+            "id": row_key,
+            "children": column_keys,
+            "parents": ["ROOT_ID", "GRID_ID"],
+            "meta": {"background": "BACKGROUND_TRANSPARENT"},
         }
+        row_keys.append(row_key)
+
+    position["GRID_ID"] = {
+        "type": "GRID",
+        "id": "GRID_ID",
+        "children": row_keys,
+        "parents": ["ROOT_ID"],
+        "meta": {},
+    }
     position["ROOT_ID"] = {
         "type": "ROOT",
         "id": "ROOT_ID",
-        "children": children,
-        "meta": {"chartId": chart_ids[0] if chart_ids else None},
+        "children": ["GRID_ID"],
+        "meta": {},
     }
     return position
 
@@ -986,8 +1066,12 @@ def upsert_chart(
     viz_type: str,
     params: dict[str, Any],
     description: str,
-) -> int:
-    """Create the chart, or update it when it already exists."""
+) -> dict[str, Any]:
+    """Create the chart, or update it when it already exists.
+
+    Returns the chart record (at least ``id``, ``uuid`` and ``slice_name``);
+    the layout needs the uuid to render the chart slot.
+    """
     query_context = build_query_context(params)
     existing = {chart["slice_name"]: chart for chart in client.charts()}
     chart = existing.get(name)
@@ -1003,9 +1087,9 @@ def upsert_chart(
             query_context=query_context,
             description=description,
         )
-        return chart["id"]
+        return chart
 
-    return client.create_chart(
+    chart_id = client.create_chart(
         dataset_id=dataset_id,
         slice_name=name,
         viz_type=viz_type,
@@ -1013,6 +1097,7 @@ def upsert_chart(
         query_context=query_context,
         description=description,
     )
+    return client.request("GET", f"/api/v1/chart/{chart_id}")["result"]
 
 
 def upsert_dashboard(
@@ -1082,11 +1167,12 @@ def main() -> int:
 
     # --- charts ----------------------------------------------------------
     chart_ids: dict[str, int] = {}
+    chart_records: dict[int, dict[str, Any]] = {}
     placements: dict[str, tuple[int, int, int, int]] = {}
     for spec in CHART_SPECS:
         dataset_id = dataset_ids[spec["dataset"]]
         params = spec["build"](dataset_id)
-        chart_id = upsert_chart(
+        chart = upsert_chart(
             client,
             dataset_id=dataset_id,
             name=spec["name"],
@@ -1094,16 +1180,17 @@ def main() -> int:
             params=params,
             description=spec["description"],
         )
-        chart_ids[spec["key"]] = chart_id
+        chart_ids[spec["key"]] = chart["id"]
+        chart_records[chart["id"]] = chart
         placements[spec["key"]] = spec["position"]
-        log(f"Chart {spec['name']!r} -> id {chart_id}")
+        log(f"Chart {spec['name']!r} -> id {chart['id']}")
 
     # --- dashboards ------------------------------------------------------
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     for spec in DASHBOARD_SPECS:
         ids = [chart_ids[key] for key in spec["charts"]]
         grid_placements = {str(chart_ids[key]): placements[key] for key in spec["charts"]}
-        position = build_position(ids, grid_placements)
+        position = build_position(ids, grid_placements, chart_records)
 
         filters = [
             native_filter(
