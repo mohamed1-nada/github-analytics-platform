@@ -1,8 +1,7 @@
-from pathlib import Path
 import logging
+from pathlib import Path
 
-from db import create_connection
-
+from database.init.db import create_connection
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +23,8 @@ def create_tables():
     ]
 
     try:
-
         for sql_file in files:
-
-            logger.info(f"Creating table from {sql_file.name}")
+            logger.info("Creating table from %s", sql_file.name)
 
             sql = sql_file.read_text()
             cursor.execute(sql)

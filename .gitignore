@@ -35,4 +35,14 @@ Thumbs.db
 .python-version
 notebook.ipynb
 structure.txt
-uv.lock
+
+# dbt artifacts
+dbt/**/target/
+dbt/**/logs/
+dbt/**/dbt_packages/
+dbt/**/.user.yml
+
+# Airflow (local runtime dirs)
+airflow_logs/
+config/
+plugins/

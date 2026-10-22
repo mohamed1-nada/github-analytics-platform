@@ -1,34 +1,50 @@
-from psycopg2.extras import execute_values
 import logging
+
+from psycopg2.extras import execute_values
 
 logger = logging.getLogger(__name__)
 
-def load_in_batches(data_generator, batch_size, insert_func):
 
+def load_in_batches(data_generator, batch_size, insert_func) -> int:
+    """Consume ``data_generator`` in batches; return the number of rows loaded."""
     batch = []
     total_loaded = 0
     for data in data_generator:
-
         batch.append(data)
 
         if len(batch) == batch_size:
             insert_func(batch)
             total_loaded += len(batch)
-            logger.info(f"Loaded batch: {len(batch)} rows | Total loaded: {total_loaded}")
+            logger.info("Loaded batch: %d rows | Total loaded: %d", len(batch), total_loaded)
             batch.clear()
 
     if batch:
         insert_func(batch)
         total_loaded += len(batch)
-        logger.info(f"Loaded final batch: {len(batch)} rows | Total loaded: {total_loaded}")
+        logger.info("Loaded final batch: %d rows | Total loaded: %d", len(batch), total_loaded)
 
+    return total_loaded
 
 
 def attach_repository_id(data_generator, repository_id):
-
     for row in data_generator:
         row["repository_id"] = repository_id
         yield row
+
+
+def dedupe_rows(batch, *keys):
+    """Drop rows sharing a conflict key within one batch (last write wins).
+
+    GitHub's list endpoints are paginated by ``updated_at desc``, so an item
+    that changes between two page requests can be returned twice. A single
+    ``INSERT ... ON CONFLICT DO UPDATE`` rejects that with "cannot affect row a
+    second time", so keep only the last occurrence of each key.
+    """
+    latest = {}
+    for row in batch:
+        latest[tuple(row[key] for key in keys)] = row
+    return list(latest.values())
+
 
 def insert_repositories(conn, repo):
 
@@ -94,13 +110,14 @@ def insert_repositories(conn, repo):
         repo["default_branch"],
         repo["size"],
         repo["archived"],
-        repo["topics"]
+        repo["topics"],
     )
 
     try:
         cursor.execute(sql, values)
     finally:
         cursor.close()
+
 
 def insert_commits(conn, batch):
 
@@ -130,7 +147,7 @@ def insert_commits(conn, batch):
             row["committer_login"],
             row["commit_author_date"],
             row["commit_committer_date"],
-            row["commit_message"]
+            row["commit_message"],
         )
         for row in batch
     ]
@@ -140,7 +157,9 @@ def insert_commits(conn, batch):
     finally:
         cursor.close()
 
+
 def insert_issues(conn, batch):
+    batch = dedupe_rows(batch, "id")
     cursor = conn.cursor()
     sql = """
         INSERT INTO issues(
@@ -177,7 +196,7 @@ def insert_issues(conn, batch):
             row["comments"],
             row["created_at"],
             row["updated_at"],
-            row["closed_at"]
+            row["closed_at"],
         )
         for row in batch
     ]
@@ -186,7 +205,9 @@ def insert_issues(conn, batch):
     finally:
         cursor.close()
 
+
 def insert_pull_requests(conn, batch):
+    batch = dedupe_rows(batch, "id")
     cursor = conn.cursor()
     sql = """
         INSERT INTO pull_requests(
@@ -229,7 +250,7 @@ def insert_pull_requests(conn, batch):
             row["closed_at"],
             row["merged_at"],
             row["draft"],
-            row["merge_commit_sha"]
+            row["merge_commit_sha"],
         )
         for row in batch
     ]
@@ -238,7 +259,9 @@ def insert_pull_requests(conn, batch):
     finally:
         cursor.close()
 
+
 def insert_commit_activity(conn, batch):
+    batch = dedupe_rows(batch, "repository_id", "week")
     cursor = conn.cursor()
     sql = """
         INSERT INTO commit_activity(
@@ -275,8 +298,8 @@ def insert_commit_activity(conn, batch):
             row["wednesday_commits"],
             row["thursday_commits"],
             row["friday_commits"],
-            row["saturday_commits"]
-        )   
+            row["saturday_commits"],
+        )
         for row in batch
     ]
     try:
@@ -284,7 +307,9 @@ def insert_commit_activity(conn, batch):
     finally:
         cursor.close()
 
+
 def insert_contributors(conn, batch):
+    batch = dedupe_rows(batch, "repository_id", "author_login")
     cursor = conn.cursor()
     sql = """
         INSERT INTO contributors(
@@ -294,13 +319,13 @@ def insert_contributors(conn, batch):
         )
         VALUES %s
         ON CONFLICT (repository_id, author_login) DO UPDATE SET
-            total_commits = EXCLUDED.total_commits      
+            total_commits = EXCLUDED.total_commits
     """
     values = [
         (
             row["repository_id"],
             row["author_login"],
-            row["total_commits"]
+            row["total_commits"],
         )
         for row in batch
     ]

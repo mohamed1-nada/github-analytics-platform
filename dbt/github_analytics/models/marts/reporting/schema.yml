@@ -1,0 +1,151 @@
+version: 2
+
+models:
+  - name: agg_pull_request_summary
+    description: "Reporting — pull request KPIs per repository. Grain: one row per repository."
+    columns:
+      - name: repository_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_repositories')
+                field: repository_id
+
+  - name: agg_repository_metrics
+    description: >
+      Reporting — one row per repository, joining every fact back to
+      dim_repositories. Grain: one row per repository.
+    columns:
+      - name: repository_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_repositories')
+                field: repository_id
+
+  - name: agg_contributor_concentration
+    description: >
+      Reporting — contribution concentration per repository (bus factor).
+      Grain: one row per repository.
+    columns:
+      - name: repository_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_repositories')
+                field: repository_id
+      - name: contributors
+        description: "Distinct contributors reported by the GitHub stats endpoint."
+      - name: top1_share_pct
+        description: "Share of lifetime commits made by the most active contributor."
+      - name: top10_share_pct
+        description: "Share of lifetime commits made by the ten most active contributors."
+      - name: gini_coefficient
+        description: >
+          Inequality of the per-contributor commit distribution, 0 (equal) to
+          1 (one contributor made every commit).
+      - name: bus_factor
+        description: >
+          1 = single maintainer, 2 = top contributor owns 50%+, 3 = top ten own
+          80%+, 4 = broad base. NULL when no contributor statistics could be
+          ingested for the repository, because the concentration is then
+          unknown rather than low.
+
+  - name: agg_activity_trend
+    description: >
+      Reporting — weekly activity per repository. Grain: one row per
+      (repository_id, week_start). Weeks are ISO weeks starting on Monday.
+    columns:
+      - name: repository_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_repositories')
+                field: repository_id
+      - name: week_start
+        description: "Monday of the ISO week."
+        data_tests:
+          - not_null
+      - name: commits
+        description: "Commits authored during the week."
+      - name: active_authors
+        description: "Distinct commit authors during the week."
+      - name: prs_created
+        description: "Pull requests opened during the week."
+      - name: prs_merged
+        description: "Pull requests merged during the week."
+      - name: issues_created
+        description: "Issues opened during the week."
+      - name: issues_closed
+        description: "Issues closed during the week."
+      - name: net_pr_flow
+        description: "prs_created minus prs_merged; negative means the backlog is shrinking."
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [repository_id, week_start]
+
+  - name: agg_issue_backlog
+    description: >
+      Reporting — issue backlog health per repository. Grain: one row per
+      repository. Ages are measured against the `as_of` watermark of the
+      ingested data, not against wall-clock time.
+    columns:
+      - name: repository_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_repositories')
+                field: repository_id
+      - name: as_of
+        description: "Newest `updated_at` in the raw issue table; the instant the ages describe."
+      - name: open_issues
+        description: "Issues still in the open state."
+      - name: close_rate_pct
+        description: "Share of ingested issues that reached the closed state."
+      - name: median_open_age_days
+        description: "Median age, in days, of the open issues."
+      - name: oldest_open_created_at
+        description: "Creation date of the longest-standing open issue."
+      - name: median_hours_to_close
+        description: "Median hours between opening and closing an issue."
+
+  - name: agg_repo_health
+    description: >
+      Reporting — composite health score per repository. Grain: one row per
+      repository. The score is a percentile rank within the tracked
+      portfolio, not an absolute measure of quality.
+    columns:
+      - name: repository_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_repositories')
+                field: repository_id
+      - name: health_score
+        description: "Weighted composite of the four component scores, 0-100."
+      - name: health_band
+        description: "Excellent (75+), Good (50+), Fair (25+) or At risk."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["Excellent", "Good", "Fair", "At risk"]
+      - name: activity_score
+        description: "Percentile of commits in the ingested window."
+      - name: community_score
+        description: "Percentile of distinct contributors."
+      - name: backlog_score
+        description: "Percentile of the issue close rate."
+      - name: popularity_score
+        description: "Percentile of stargazers."

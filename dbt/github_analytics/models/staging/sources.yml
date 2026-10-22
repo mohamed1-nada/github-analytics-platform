@@ -1,0 +1,64 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Raw tables loaded by the Python ingestion pipeline (`python main.py`).
+      One row per source entity; upserted on the natural key of each table.
+    schema: public
+    tables:
+      - name: repositories
+        description: "Repository metadata. Grain: one row per repository (id)."
+        loaded_at_field: updated_at
+        freshness:
+          warn_after: { count: 2, period: day }
+        columns:
+          - name: id
+            data_tests: [unique, not_null]
+          - name: full_name
+            data_tests: [unique, not_null]
+
+      - name: commits
+        description: >
+          Commits reachable from the default branch. Grain: one row per
+          (repository_id, sha). Only commits inside the ingestion window are loaded.
+        loaded_at_field: commit_committer_date
+        freshness:
+          warn_after: { count: 2, period: day }
+        columns:
+          - name: sha
+            data_tests: [not_null]
+          - name: repository_id
+            data_tests: [not_null]
+
+      - name: issues
+        description: "Issues only, pull requests are excluded. Grain: one row per issue (id)."
+        loaded_at_field: updated_at
+        freshness:
+          warn_after: { count: 2, period: day }
+        columns:
+          - name: id
+            data_tests: [unique, not_null]
+
+      - name: pull_requests
+        description: "Pull requests. Grain: one row per pull request (id)."
+        loaded_at_field: updated_at
+        freshness:
+          warn_after: { count: 2, period: day }
+        columns:
+          - name: id
+            data_tests: [unique, not_null]
+
+      - name: commit_activity
+        description: >
+          Weekly commit totals per repository, from the GitHub commit_activity
+          stats endpoint. Grain: one row per (repository_id, week).
+        columns:
+          - name: week
+            data_tests: [not_null]
+
+      - name: contributors
+        description: "Contributor commit totals per repository. Grain: one row per (repository_id, author_login)."
+        columns:
+          - name: author_login
+            data_tests: [not_null]

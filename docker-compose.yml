@@ -1,0 +1,200 @@
+x-airflow-common: &airflow-common
+  # Custom image = official Airflow + the pipeline's deps (from uv.lock).
+  # Source code is bind-mounted, so DAG/pipeline edits need no rebuild.
+  build:
+    context: ./docker
+    dockerfile: Dockerfile
+  image: lap-airflow:3.3.2
+  env_file:
+    - .env
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-airflow_jwt_secret}
+    AIRFLOW__API_AUTH__JWT_ISSUER: ${AIRFLOW__API_AUTH__JWT_ISSUER:-airflow}
+    AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY:-}
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/lap/dags
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+    # Let every Airflow process (and task subprocesses) import the project.
+    PYTHONPATH: /opt/lap
+    # Inside the compose network the analytics Postgres is `postgres:5432`;
+    # the .env values (DBHOST=localhost, host port) are meant for the host.
+    DBHOST: postgres
+    PGHOST: postgres
+    PGPORT: '5432'
+  volumes:
+    - ./:/opt/lap
+    - ./airflow_logs:/opt/airflow/logs
+    - ./config:/opt/airflow/config
+    - ./plugins:/opt/airflow/plugins
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: postgres_db
+    restart: always
+
+    environment:
+      POSTGRES_USER: ${DBUSER}
+      POSTGRES_PASSWORD: ${DBPASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME}
+
+    ports:
+      - "${PGPORT:-5432}:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 10s
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    # Distinct name/port: another local compose project already owns a
+    # container literally named `pgadmin` and host port 8080.
+    container_name: lap-pgadmin
+    restart: always
+
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+
+    ports:
+      - "${PGADMIN_PORT:-8081}:80"
+
+    depends_on:
+      - postgres
+
+  # One-shot: create the `airflow` role + metadata database in the existing
+  # Postgres (idempotent, safe to re-run on every `docker compose up`).
+  airflow-db-create:
+    image: postgres:17
+    env_file:
+      - .env
+    environment:
+      PGPASSWORD: ${DBPASSWORD}
+    command:
+      - bash
+      - -c
+      - |
+        set -eu
+        psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" -tAc \
+          "SELECT 1 FROM pg_roles WHERE rolname='airflow'" | grep -q 1 || \
+          psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" \
+            -c "CREATE ROLE airflow LOGIN PASSWORD 'airflow' SUPERUSER"
+        psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" -tAc \
+          "SELECT 1 FROM pg_database WHERE datname='airflow'" | grep -q 1 || \
+          psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" \
+            -c "CREATE DATABASE airflow OWNER airflow"
+        echo "Postgres: 'airflow' role and metadata database are ready"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # One-shot: run migrations, create the admin user (official _AIRFLOW_WWW_*
+  # mechanism handled by /entrypoint), fix ownership of the shared dirs.
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -eu
+        echo "Airflow version:"
+        /entrypoint airflow version
+        chown -v -R "$${AIRFLOW_UID:-50000}:0" /opt/airflow/{logs,config,plugins}
+        echo "airflow-init complete: database migrated, admin user ensured."
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+      _PIP_ADDITIONAL_REQUIREMENTS: ''
+    user: "0:0"
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-db-create:
+        condition: service_completed_successfully
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "8090:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:

@@ -1,0 +1,19 @@
+# Optional in-repo dbt profile, so the project does not depend on
+# ~/.dbt/profiles.yml. Credentials are read from the same environment
+# variables as the Python pipeline (.env).
+#
+# Usage (from dbt/github_analytics):
+#   set -a && source ../../.env && set +a
+#   uv run dbt build --profiles-dir .
+github_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('DBHOST', 'localhost') }}"
+      port: "{{ env_var('PGPORT', '5432') | int }}"
+      user: "{{ env_var('DBUSER') }}"
+      pass: "{{ env_var('DBPASSWORD') }}"
+      dbname: "{{ env_var('DATABASE_NAME') }}"
+      schema: public
+      threads: 4

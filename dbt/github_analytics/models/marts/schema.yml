@@ -1,0 +1,125 @@
+version: 2
+
+models:
+  - name: dim_repositories
+    description: "Dimension — repositories. Grain: one row per repository."
+    columns:
+      - name: repository_id
+        description: "Natural key: GitHub repository id."
+        data_tests: [unique, not_null]
+      - name: full_name
+        description: "owner/name."
+        data_tests: [unique, not_null]
+      - name: owner_login
+        description: "Owner account, useful for slicing by organisation."
+
+  - name: dim_contributors
+    description: >
+      Dimension — contributors per repository.
+      Grain: one row per (repository_id, author_login).
+    columns:
+      - name: repository_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_repositories')
+                field: repository_id
+      - name: author_login
+        description: "GitHub login of the commit author."
+        data_tests: [not_null]
+      - name: total_commits
+        description: "Lifetime commits reported by the GitHub contributor stats endpoint."
+      - name: commits_in_window
+        description: "Commits seen in the ingested window."
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [repository_id, author_login]
+
+  - name: fct_commits_daily
+    description: "Fact — commits per repository per day. Grain: one row per (repository_id, commit_date)."
+    columns:
+      - name: repository_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_repositories')
+                field: repository_id
+      - name: commit_date
+        data_tests: [not_null]
+      - name: commits
+        description: "Number of commits authored on that date."
+      - name: distinct_authors
+        description: "Distinct commit authors on that date."
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [repository_id, commit_date]
+
+  - name: fct_pull_requests
+    description: "Fact — pull requests. Grain: one row per (repository_id, pull_request_id)."
+    columns:
+      - name: repository_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_repositories')
+                field: repository_id
+      - name: pull_request_id
+        data_tests: [not_null]
+      - name: state
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["open", "closed"]
+      - name: is_merged
+        description: "True when merged_at is set."
+      - name: hours_to_merge
+        description: "Hours between creation and merge; null when not merged."
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [repository_id, pull_request_id]
+
+  - name: fct_issues
+    description: "Fact — issues. Grain: one row per (repository_id, issue_id)."
+    columns:
+      - name: repository_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_repositories')
+                field: repository_id
+      - name: issue_id
+        data_tests: [not_null]
+      - name: state
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["open", "closed"]
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [repository_id, issue_id]
+
+  - name: fct_commit_activity_weekly
+    description: "Fact — weekly commit activity. Grain: one row per (repository_id, week)."
+    columns:
+      - name: repository_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_repositories')
+                field: repository_id
+      - name: week
+        description: "Week start as a Unix timestamp (Sunday, UTC)."
+        data_tests: [not_null]
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [repository_id, week]

@@ -1,0 +1,47 @@
+version: 2
+
+models:
+  - name: stg_repositories
+    description: "Staging: raw repositories, column renames and casts only. Grain: one row per repository."
+    columns:
+      - name: repository_id
+        description: GitHub repository id (natural key).
+        data_tests: [unique, not_null]
+      - name: full_name
+        data_tests: [unique, not_null]
+
+  - name: stg_commits
+    description: "Staging: raw commits. Grain: one row per (repository_id, sha)."
+    columns:
+      - name: sha
+        data_tests: [not_null]
+      - name: repository_id
+        data_tests: [not_null]
+
+  - name: stg_issues
+    description: "Staging: raw issues, pull requests already excluded upstream. Grain: one row per issue."
+    columns:
+      - name: issue_id
+        data_tests: [unique, not_null]
+
+  - name: stg_pull_requests
+    description: "Staging: raw pull requests. Grain: one row per pull request."
+    columns:
+      - name: pull_request_id
+        data_tests: [unique, not_null]
+
+  - name: stg_commit_activity
+    description: "Staging: weekly commit activity per repository. Grain: one row per (repository_id, week)."
+    columns:
+      - name: week
+        data_tests: [not_null]
+      - name: repository_id
+        data_tests: [not_null]
+
+  - name: stg_contributors
+    description: "Staging: contributor commit totals. Grain: one row per (repository_id, author_login)."
+    columns:
+      - name: author_login
+        data_tests: [not_null]
+      - name: repository_id
+        data_tests: [not_null]

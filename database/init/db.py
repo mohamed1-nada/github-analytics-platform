@@ -1,17 +1,15 @@
-import os 
 import psycopg2
-from dotenv import load_dotenv
-load_dotenv()
+
+from config import get_settings
+
 
 def create_connection():
-
-    conn = psycopg2.connect(
-        host=os.environ.get("PGHOST"),
-        database=os.environ.get("PGDATABASE"),
-        user=os.environ.get("PGUSER"),
-        password=os.environ.get("PGPASSWORD"),
-        port=os.environ.get("PGPORT")
+    settings = get_settings()
+    settings.require_database_settings()
+    return psycopg2.connect(
+        host=settings.pg_host,
+        database=settings.pg_database,
+        user=settings.pg_user,
+        password=settings.pg_password,
+        port=settings.pg_port,
     )
-    return conn
-
-    

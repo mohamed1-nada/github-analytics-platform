@@ -1,0 +1,13 @@
+version: 2
+
+models:
+  - name: int_contributor_activity
+    description: >
+      Intermediate: commit counts and first/last commit timestamps per
+      repository and author, derived from stg_commits.
+      Grain: one row per (repository_id, author_login).
+    columns:
+      - name: repository_id
+        data_tests: [not_null]
+      - name: author_login
+        data_tests: [not_null]

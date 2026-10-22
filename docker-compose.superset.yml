@@ -1,0 +1,246 @@
+# Superset overlay for the GitHub analytics warehouse.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.superset.yml up -d
+#
+# The base compose file keeps running unchanged: this overlay reuses the
+# same Postgres instance (network alias `postgres`) for the analytics data
+# and adds a separate `superset` metadata database inside it, mirroring the
+# existing `airflow-db-create` pattern.
+#
+# Services
+#   superset-redis      Celery broker + cache
+#   superset-db-create  one-shot: `superset` role/database + `superset_ro`
+#   superset-init       one-shot: db upgrade, admin user, default roles
+#   superset-mail       mail catcher (SMTP sink for alerts and reports)
+#   superset            webserver (UI on http://localhost:8088)
+#   superset-worker     celery worker (async queries, report delivery)
+#   superset-beat       celery beat (scheduled reports and alerts)
+#   superset-bootstrap  one-shot: DB connection, datasets, dashboard import
+
+x-superset-common: &superset-common
+  build:
+    context: ./docker
+    dockerfile: superset.Dockerfile
+  image: lap-superset:6.1.0
+  container_name: superset_app
+  env_file:
+    - .env
+  environment: &superset-env
+    # Metadata database: its own `superset` database inside the shared
+    # Postgres instance, owned by the `superset` role.
+    SQLALCHEMY_DATABASE_URI: >-
+      postgresql+psycopg2://superset:${SUPERSET_DB_PASSWORD:-superset}@postgres:5432/superset
+    DATABASE_DIALECT: postgresql
+    REDIS_HOST: superset-redis
+    REDIS_PORT: '6379'
+    SECRET_KEY: ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY must be set in .env}
+    SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY must be set in .env}
+    SUPERSET_LOAD_EXAMPLES: 'no'
+    # `superset_config.py` lives next to this file in ./superset, which is
+    # mounted on the image's PYTHONPATH.
+    SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
+    # Analytics database coordinates (used by bootstrap.py to open the
+    # read-only connection to the warehouse).
+    ANALYTICS_DB_HOST: postgres
+    ANALYTICS_DB_PORT: '5432'
+    ANALYTICS_DB_NAME: ${DATABASE_NAME}
+    ANALYTICS_DB_USER: ${SUPERSET_RO_USER:-superset_ro}
+    ANALYTICS_DB_PASSWORD: ${SUPERSET_RO_PASSWORD:-superset_ro}
+    # Where the worker reaches the webserver. Reports and alerts fetch the
+    # chart data over HTTP from inside the compose network, so this has to
+    # be the service name, not localhost.
+    SUPERSET_BASEURL: ${SUPERSET_BASEURL:-http://superset:8088/}
+    # Where the *reader* of an e-mail reaches the dashboard.
+    SUPERSET_BASEURL_USER_FRIENDLY: ${SUPERSET_BASEURL_USER_FRIENDLY:-http://localhost:8088/}
+  volumes:
+    - ./superset:/app/pythonpath
+    - superset_home:/app/superset_home
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  superset-redis:
+    image: redis:7-alpine
+    container_name: superset_redis
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - superset_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+      start_period: 10s
+
+  # One-shot: create the `superset` metadata role + database, and a
+  # read-only role for the analytics data. Idempotent, safe to re-run.
+  superset-db-create:
+    image: postgres:17
+    container_name: superset_db_create
+    restart: "no"
+    env_file:
+      - .env
+    environment:
+      PGPASSWORD: ${DBPASSWORD}
+    command:
+      - bash
+      - -c
+      - |
+        set -eu
+        psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" -tAc \
+          "SELECT 1 FROM pg_roles WHERE rolname='superset'" | grep -q 1 || \
+          psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" \
+            -c "CREATE ROLE superset LOGIN PASSWORD '$${SUPERSET_DB_PASSWORD:-superset}'"
+        psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" -tAc \
+          "SELECT 1 FROM pg_database WHERE datname='superset'" | grep -q 1 || \
+          psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" \
+            -c "CREATE DATABASE superset OWNER superset"
+        # Read-only role for the warehouse: Superset never writes to it.
+        psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" -tAc \
+          "SELECT 1 FROM pg_roles WHERE rolname='$${SUPERSET_RO_USER:-superset_ro}'" | grep -q 1 || \
+          psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" \
+            -c "CREATE ROLE \"$${SUPERSET_RO_USER:-superset_ro}\" LOGIN PASSWORD '$${SUPERSET_RO_PASSWORD:-superset_ro}'"
+        psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" \
+          -c "GRANT CONNECT ON DATABASE \"$${DATABASE_NAME}\" TO \"$${SUPERSET_RO_USER:-superset_ro}\""
+        psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" \
+          -c "GRANT USAGE ON SCHEMA public TO \"$${SUPERSET_RO_USER:-superset_ro}\""
+        psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" \
+          -c "GRANT SELECT ON ALL TABLES IN SCHEMA public TO \"$${SUPERSET_RO_USER:-superset_ro}\""
+        psql -h postgres -U "$${DBUSER}" -d "$${DATABASE_NAME}" \
+          -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO \"$${SUPERSET_RO_USER:-superset_ro}\""
+        echo "Postgres: 'superset' metadata role/database and the read-only warehouse role are ready"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Mail catcher. Alerts and scheduled reports deliver over SMTP; this
+  # container accepts everything and keeps it, so the delivery path can be
+  # exercised end to end without a real mail server. Its web UI on
+  # http://localhost:8025 shows every message that was "sent".
+  superset-mail:
+    image: axllent/mailpit:latest
+    container_name: superset_mail
+    restart: always
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: '1'
+      MP_SMTP_AUTH_ALLOW_INSECURE: '1'
+      MP_MAX_MESSAGES: '500'
+      MP_SMTP_BIND_ADDR: '0.0.0.0:1025'
+      MP_HTTP_BIND_ADDR: '0.0.0.0:8025'
+    ports:
+      - "${SUPERSET_MAIL_PORT:-8025}:8025"
+
+  # One-shot: migrate the metadata database, create the admin user, load the
+  # default roles and permissions.
+  superset-init:
+    <<: *superset-common
+    container_name: superset_init
+    restart: "no"
+    user: "0:0"
+    command:
+      - bash
+      - -c
+      - |
+        set -eu
+        echo "Superset version:"
+        superset version
+        superset db upgrade
+        superset fab create-admin \
+          --username "$${SUPERSET_ADMIN_USERNAME:-admin}" \
+          --email "$${SUPERSET_ADMIN_EMAIL:-admin@example.com}" \
+          --firstname Superset --lastname Admin \
+          --password "$${SUPERSET_ADMIN_PASSWORD:-admin}" || \
+          echo "Admin user already exists, skipping creation"
+        superset init
+        echo "superset-init complete: metadata database migrated, admin user ensured."
+    depends_on:
+      superset-db-create:
+        condition: service_completed_successfully
+      superset-redis:
+        condition: service_healthy
+
+  superset:
+    <<: *superset-common
+    container_name: superset
+    restart: always
+    # No `command:` override: the image's own CMD runs gunicorn against
+    # FLASK_APP=superset.app:create_app().
+    ports:
+      - "${SUPERSET_PORT:-8088}:8088"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      superset-init:
+        condition: service_completed_successfully
+
+  superset-worker:
+    <<: *superset-common
+    container_name: superset_worker
+    restart: always
+    # `--app` is what makes the worker load superset_config.py and pick up
+    # the Redis broker; without it celery falls back to its own defaults.
+    command: celery --app superset.tasks.celery_app:app worker --loglevel=INFO
+    # The image ships a healthcheck that probes the webserver, which does not
+    # run in this container; it is replaced by a worker round-trip.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery --app superset.tasks.celery_app:app inspect ping -d celery@$$HOSTNAME
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      superset-init:
+        condition: service_completed_successfully
+
+  superset-beat:
+    <<: *superset-common
+    container_name: superset_beat
+    restart: always
+    command:
+      - celery
+      - --app
+      - superset.tasks.celery_app:app
+      - beat
+      - --loglevel=INFO
+      - --schedule=/app/superset_home/celerybeat-schedule
+    # Same story as the worker: the image's healthcheck targets the webserver.
+    # Here the beat process itself is the thing worth watching.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - ps -eo args | grep -q '[c]elery.*beat'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      superset-init:
+        condition: service_completed_successfully
+
+  # One-shot: provision the warehouse connection, the datasets and import
+  # the committed dashboard definitions. Idempotent.
+  superset-bootstrap:
+    <<: *superset-common
+    container_name: superset_bootstrap
+    restart: "no"
+    user: "0:0"
+    environment:
+      <<: *superset-env
+      # The webserver is a separate container, so it is reached by service
+      # name rather than on localhost.
+      SUPERSET_URL: http://superset:8088
+    command: ["bash", "-c", "python /app/pythonpath/bootstrap.py"]
+    depends_on:
+      superset:
+        condition: service_healthy
+
+volumes:
+  superset_redis:
+  superset_home:
