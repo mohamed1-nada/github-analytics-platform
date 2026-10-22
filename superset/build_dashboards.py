@@ -1023,7 +1023,15 @@ def upsert_dashboard(
     position: dict[str, Any],
     json_metadata: dict[str, Any],
 ) -> int:
-    """Create the dashboard, or update it when it already exists."""
+    """Create the dashboard, or update it when it already exists.
+
+    The layout has to travel *inside* ``json_metadata`` as well as in
+    ``position_json``. Superset derives the dashboard's chart association
+    (``dashboard_slices``) from ``json_metadata["positions"]``; a dashboard
+    whose relation is empty renders every slot as "no chart definition
+    associated with this component".
+    """
+    metadata = {**json_metadata, "positions": position}
     existing = {dash["slug"]: dash for dash in client.dashboards()}
     dashboard = existing.get(slug)
 
@@ -1033,17 +1041,28 @@ def upsert_dashboard(
             dashboard_title=title,
             slug=slug,
             position_json=position,
-            json_metadata=json_metadata,
+            json_metadata=metadata,
             published=True,
         )
         return dashboard["id"]
 
-    return client.create_dashboard(
+    dashboard_id = client.create_dashboard(
         dashboard_title=title,
         slug=slug,
         position=position,
-        json_metadata=json_metadata,
+        json_metadata=metadata,
     )
+    # Creating a dashboard does not link its charts; replaying the layout as
+    # an update is what establishes the association.
+    client.update_dashboard(
+        dashboard_id,
+        dashboard_title=title,
+        slug=slug,
+        position_json=position,
+        json_metadata=metadata,
+        published=True,
+    )
+    return dashboard_id
 
 
 def main() -> int:
