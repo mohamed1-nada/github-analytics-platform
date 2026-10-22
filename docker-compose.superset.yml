@@ -211,11 +211,10 @@ services:
       - --loglevel=INFO
       - --schedule=/app/superset_home/celerybeat-schedule
     # Same story as the worker: the image's healthcheck targets the webserver.
-    # Here the beat process itself is the thing worth watching.
+    # Here the beat process itself is the thing worth watching. The image has
+    # no `ps`/`pgrep`, so inspect PID 1's cmdline directly.
     healthcheck:
-      test:
-        - CMD-SHELL
-        - ps -eo args | grep -q '[c]elery.*beat'
+      test: ["CMD-SHELL", "grep -qa 'celery.*beat' /proc/1/cmdline"]
       interval: 30s
       timeout: 10s
       retries: 5
