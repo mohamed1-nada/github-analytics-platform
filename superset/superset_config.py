@@ -141,15 +141,17 @@ WEBDRIVER_BASEURL_USER_FRIENDLY = _env("SUPERSET_BASEURL_USER_FRIENDLY", "http:/
 # E-mail delivery for report attachments and alert notifications. Set
 # SMTP_HOST to enable it; when it is empty the features stay available but
 # cannot deliver anything.
+#
+# The key names are Superset's own (SMTP_STARTTLS/SMTP_SSL/SMTP_USER) — they
+# are not the Airflow ones, and a typo here silently falls back to the
+# default "starttls on localhost:25".
 SMTP_HOST = _env("SUPERSET_SMTP_HOST")
 SMTP_PORT = int(_env("SUPERSET_SMTP_PORT", "25"))
-SMTP_USERNAME = _env("SUPERSET_SMTP_USERNAME")
+SMTP_USER = _env("SUPERSET_SMTP_USERNAME")
 SMTP_PASSWORD = _env("SUPERSET_SMTP_PASSWORD")
-SMTP_USE_TLS = _env_bool("SUPERSET_SMTP_USE_TLS", False)
-SMTP_USE_SSL = _env_bool("SUPERSET_SMTP_USE_SSL", False)
-SMTP_SERVER_AUTH = bool(SMTP_USERNAME)
-MAIL_USERNAME = SMTP_USERNAME or ""
-MAIL_PASSWORD = SMTP_PASSWORD or ""
+SMTP_STARTTLS = _env_bool("SUPERSET_SMTP_USE_TLS", False)
+SMTP_SSL = _env_bool("SUPERSET_SMTP_USE_SSL", False)
+SMTP_MAIL_FROM = _env("SUPERSET_SMTP_FROM", "superset@superset.local")
 EMAIL_NOTIFICATIONS = bool(SMTP_HOST)
 # Deliver for real. The flag exists so a staging instance can exercise the
 # report pipeline without mailing anybody; here the mail catcher in the

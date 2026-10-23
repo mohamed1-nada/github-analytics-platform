@@ -773,6 +773,35 @@ CHART_SPECS: list[dict[str, Any]] = [
             orderby=[["avg__activity_score", False]],
         ),
     },
+    {
+        # Not placed on a dashboard: this is the table the "Repositories at
+        # risk" alert mails out, so the alert shows the repositories that
+        # tripped it rather than the whole portfolio.
+        "key": "rh-at-risk",
+        "dataset": "health",
+        "name": "At-risk repositories",
+        "description": (
+            "Repositories whose composite health score falls into the 'At risk' band, worst first."
+        ),
+        "position": (0, 0, 12, 50),
+        "build": lambda d: table_params(
+            d,
+            [
+                "full_name",
+                "language",
+                "health_score",
+                "activity_score",
+                "community_score",
+                "backlog_score",
+                "popularity_score",
+                "issues_open",
+                "commits",
+            ],
+            orderby=[["health_score", True]],
+            row_limit=200,
+            adhoc_filters=[equals_filter("health_band", "At risk")],
+        ),
+    },
 ]
 
 

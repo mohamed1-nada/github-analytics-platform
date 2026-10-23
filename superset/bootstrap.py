@@ -8,7 +8,8 @@ created when missing:
 1. the read-only connection to the analytics database;
 2. one physical dataset per dbt mart, so the dashboards have something to
    point at;
-3. the dashboard definitions committed under ``superset/dashboards``.
+3. the dashboard definitions committed under ``superset/dashboards``;
+4. the alert and the scheduled report that go with them.
 
 The dashboard import is delegated to ``superset import-dashboards``, the
 officially supported path: it remaps dataset references by name and writes
@@ -262,12 +263,24 @@ def import_dashboards() -> None:
         log(f"Imported {archive.name}")
 
 
+def ensure_reports() -> None:
+    """Create the alert and the scheduled report (idempotent)."""
+    # Imported here rather than at module scope: the script is a standalone
+    # entry point too, and it needs the webserver to be up before it runs.
+    from create_reports import main as create_reports_main
+
+    log("Creating alerts and scheduled reports")
+    if create_reports_main() != 0:
+        raise SystemExit("Could not create the alerts and scheduled reports")
+
+
 def main() -> int:
     wait_for_superset()
     token, user_id = login()
     database_id = ensure_database(token)
     ensure_datasets(token, database_id, user_id)
     import_dashboards()
+    ensure_reports()
     log("Bootstrap complete")
     return 0
 

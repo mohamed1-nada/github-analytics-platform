@@ -225,6 +225,21 @@ class SupersetClient:
     def delete_dashboard(self, dashboard_id: int) -> None:
         self.request("DELETE", f"/api/v1/dashboard/{dashboard_id}")
 
+    # --- alerts & reports -------------------------------------------------
+
+    def reports(self) -> list[dict]:
+        return self.request("GET", "/api/v1/report/?page_size=200").get("result", [])
+
+    def create_report(self, **fields) -> dict:
+        """Create an alert or a scheduled report."""
+        return self.request("POST", "/api/v1/report/", json=fields)
+
+    def update_report(self, report_id: int, **fields) -> None:
+        self.request("PUT", f"/api/v1/report/{report_id}", json=fields)
+
+    def report_logs(self, report_id: int) -> list[dict]:
+        return self.request("GET", f"/api/v1/report/{report_id}/log/").get("result", [])
+
     # --- export / import --------------------------------------------------
 
     def export_dashboard(self, dashboard_id: int) -> bytes:
